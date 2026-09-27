@@ -20,6 +20,7 @@ struct ContentView: View {
 
     @ObservedObject var coordinator = BoringViewCoordinator.shared
     @ObservedObject var musicManager = MusicManager.shared
+    @ObservedObject var timer = NotchTimer.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var brightnessManager = BrightnessManager.shared
     @ObservedObject var volumeManager = VolumeManager.shared
@@ -42,6 +43,14 @@ struct ContentView: View {
 
     private let extendedHoverPadding: CGFloat = 30
     private let zeroHeightHoverPadding: CGFloat = 10
+
+    private var showMusicActivity: Bool {
+        (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled
+    }
+
+    private var liveActivitySideWidth: CGFloat {
+        timer.isActive ? 76 : max(0, vm.effectiveClosedNotchHeight - 12)
+    }
 
     private var topCornerRadius: CGFloat {
        ((vm.notchState == .open) && Defaults[.cornerRadiusScaling])
@@ -66,10 +75,9 @@ struct ContentView: View {
         {
             chinWidth = 640
         } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music)
-            && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle)
-            && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed
+            && vm.notchState == .closed && (timer.isActive || showMusicActivity) && !vm.hideOnClosed
         {
-            chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
+            chinWidth += (2 * liveActivitySideWidth + 20)
         } else if !coordinator.expandingView.show && vm.notchState == .closed
             && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace]
             && !vm.hideOnClosed
@@ -91,6 +99,8 @@ struct ContentView: View {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
                 let mainLayout = NotchLayout()
+                    .opacity(timer.isShowingCompletion ? 0 : 1)
+                    .allowsHitTesting(!timer.isShowingCompletion)
                     .frame(alignment: .top)
                     .padding(
                         .horizontal,
@@ -101,6 +111,11 @@ struct ContentView: View {
                     )
                     .padding([.horizontal, .bottom], vm.notchState == .open ? 12 : 0)
                     .background(.black)
+                    .overlay {
+                        if timer.isShowingCompletion {
+                            CountdownCompletionView().allowsHitTesting(false)
+                        }
+                    }
                     .clipShape(currentNotchShape)
                     .overlay(alignment: .top) {
                         Rectangle()
@@ -214,6 +229,17 @@ struct ContentView: View {
         .background(dragDetector)
         .preferredColorScheme(.dark)
         .environmentObject(vm)
+        .onChange(of: timer.state) { _, state in
+            if state == .setting || state == .finished { hoverTask?.cancel() }
+            if state == .finished {
+                doOpen()
+            } else if state == .dismissing {
+                withAnimation(animationSpring) { vm.close() }
+            }
+        }
+        .onChange(of: coordinator.currentView) { _, view in
+            if view != .home && timer.state == .setting { timer.reset() }
+        }
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
 
@@ -287,7 +313,7 @@ struct ContentView: View {
                       } else if coordinator.sneakPeek.show && Defaults[.inlineHUD] && (coordinator.sneakPeek.type != .music) && (coordinator.sneakPeek.type != .battery) && vm.notchState == .closed {
                           InlineHUD(type: $coordinator.sneakPeek.type, value: $coordinator.sneakPeek.value, icon: $coordinator.sneakPeek.icon, hoverAnimation: $isHovering, gestureProgress: $gestureProgress)
                               .transition(.opacity)
-                      } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
+                      } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (timer.isActive || showMusicActivity) && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
@@ -401,11 +427,14 @@ struct ContentView: View {
                     height: max(0, vm.effectiveClosedNotchHeight - 12)
                 )
 
+                .opacity(showMusicActivity ? 1 : 0)
+                .frame(width: liveActivitySideWidth, alignment: .leading)
+
             Rectangle()
                 .fill(.black)
                 .overlay(
                     HStack(alignment: .top) {
-                        if coordinator.expandingView.show
+                        if !timer.isActive && coordinator.expandingView.show
                             && coordinator.expandingView.type == .music
                         {
                             MarqueeText(
@@ -440,7 +469,7 @@ struct ContentView: View {
                     }
                 )
                 .frame(
-                    width: (coordinator.expandingView.show
+                    width: (!timer.isActive && coordinator.expandingView.show
                         && coordinator.expandingView.type == .music
                         && Defaults[.sneakPeekStyles] == .inline)
                         ? 380
@@ -449,7 +478,9 @@ struct ContentView: View {
                 )
 
             HStack {
-                if useMusicVisualizer {
+                if timer.isActive {
+                    NotchTimerView(compact: true)
+                } else if useMusicVisualizer {
                     Rectangle()
                         .fill(
                             Defaults[.coloredSpectrogram]
@@ -470,8 +501,7 @@ struct ContentView: View {
             .frame(
                 width: max(
                     0,
-                    vm.effectiveClosedNotchHeight - 12
-                        + gestureProgress / 2
+                    liveActivitySideWidth + gestureProgress / 2
                 ),
                 height: max(
                     0,
@@ -511,7 +541,7 @@ struct ContentView: View {
     // MARK: - Hover Management
 
     private func handleHover(_ hovering: Bool) {
-        if coordinator.firstLaunch { return }
+        if coordinator.firstLaunch || timer.isShowingCompletion { return }
         hoverTask?.cancel()
         
         if hovering {
@@ -583,7 +613,8 @@ struct ContentView: View {
     }
 
     private func handleUpGesture(translation: CGFloat, phase: NSEvent.Phase) {
-        guard vm.notchState == .open && !vm.isHoveringCalendar else { return }
+        guard vm.notchState == .open && !vm.isHoveringCalendar,
+              timer.state != .setting && !timer.isShowingCompletion else { return }
 
         withAnimation(animationSpring) {
             gestureProgress = (translation / Defaults[.gestureSensitivity]) * -20

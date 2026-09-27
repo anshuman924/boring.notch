@@ -198,10 +198,13 @@ class BoringViewModel: NSObject, ObservableObject {
     }
 
     func close() {
+        // Keep the short completion animation visible until it dismisses.
+        guard NotchTimer.shared.state != .finished else { return }
         // Do not close while a share picker or sharing service is active
         if SharingStateManager.shared.preventNotchClose {
             return
         }
+        if NotchTimer.shared.state == .setting { NotchTimer.shared.reset() }
         self.notchSize = getClosedNotchSize(screenUUID: self.screenUUID)
         self.closedNotchSize = self.notchSize
         self.notchState = .closed
