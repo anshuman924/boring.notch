@@ -99,6 +99,8 @@ struct ContentView: View {
         ZStack(alignment: .top) {
             VStack(spacing: 0) {
                 let mainLayout = NotchLayout()
+                    .opacity(timer.isShowingCompletion ? 0 : 1)
+                    .allowsHitTesting(!timer.isShowingCompletion)
                     .frame(alignment: .top)
                     .padding(
                         .horizontal,
@@ -109,6 +111,11 @@ struct ContentView: View {
                     )
                     .padding([.horizontal, .bottom], vm.notchState == .open ? 12 : 0)
                     .background(.black)
+                    .overlay {
+                        if timer.isShowingCompletion {
+                            CountdownCompletionView().allowsHitTesting(false)
+                        }
+                    }
                     .clipShape(currentNotchShape)
                     .overlay(alignment: .top) {
                         Rectangle()
@@ -222,6 +229,17 @@ struct ContentView: View {
         .background(dragDetector)
         .preferredColorScheme(.dark)
         .environmentObject(vm)
+        .onChange(of: timer.state) { _, state in
+            if state == .setting || state == .finished { hoverTask?.cancel() }
+            if state == .finished {
+                doOpen()
+            } else if state == .dismissing {
+                withAnimation(animationSpring) { vm.close() }
+            }
+        }
+        .onChange(of: coordinator.currentView) { _, view in
+            if view != .home && timer.state == .setting { timer.reset() }
+        }
         .onChange(of: vm.anyDropZoneTargeting) { _, isTargeted in
             anyDropDebounceTask?.cancel()
 
@@ -523,7 +541,7 @@ struct ContentView: View {
     // MARK: - Hover Management
 
     private func handleHover(_ hovering: Bool) {
-        if coordinator.firstLaunch { return }
+        if coordinator.firstLaunch || timer.isShowingCompletion { return }
         hoverTask?.cancel()
         
         if hovering {
@@ -595,7 +613,8 @@ struct ContentView: View {
     }
 
     private func handleUpGesture(translation: CGFloat, phase: NSEvent.Phase) {
-        guard vm.notchState == .open && !vm.isHoveringCalendar else { return }
+        guard vm.notchState == .open && !vm.isHoveringCalendar,
+              timer.state != .setting && !timer.isShowingCompletion else { return }
 
         withAnimation(animationSpring) {
             gestureProgress = (translation / Defaults[.gestureSensitivity]) * -20

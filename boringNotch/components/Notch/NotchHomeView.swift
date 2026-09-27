@@ -423,14 +423,21 @@ struct NotchHomeView: View {
     @ObservedObject var webcamManager = WebcamManager.shared
     @ObservedObject var batteryModel = BatteryStatusViewModel.shared
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @ObservedObject private var timer = NotchTimer.shared
     let albumArtNamespace: Namespace.ID
 
     var body: some View {
         Group {
             if !coordinator.firstLaunch {
-                mainContent
+                if timer.state == .setting {
+                    CountdownSetupView()
+                        .transition(.opacity)
+                } else {
+                    mainContent
+                }
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: timer.state == .setting)
         // simplified: use a straightforward opacity transition
         .transition(.opacity)
     }
