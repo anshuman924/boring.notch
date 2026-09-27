@@ -6,22 +6,31 @@
 //
 
 import SwiftUI
+import Defaults
 
 struct TabModel: Identifiable {
-    let id = UUID()
+    var id: String { label }
     let label: String
     let icon: String
     let view: NotchViews
 }
 
-let tabs = [
-    TabModel(label: "Home", icon: "house.fill", view: .home),
-    TabModel(label: "Shelf", icon: "tray.fill", view: .shelf)
-]
-
 struct TabSelectionView: View {
     @ObservedObject var coordinator = BoringViewCoordinator.shared
+    @StateObject private var shelf = ShelfStateViewModel.shared
+    @Default(.boringShelf) private var shelfEnabled
     @Namespace var animation
+
+    private var tabs: [TabModel] {
+        var result = [
+            TabModel(label: "Home", icon: "house.fill", view: .home),
+            TabModel(label: "Activity Monitor", icon: "waveform.path.ecg", view: .activity)
+        ]
+        if shelfEnabled && (!shelf.isEmpty || coordinator.alwaysShowTabs || coordinator.currentView == .shelf) {
+            result.append(TabModel(label: "Shelf", icon: "tray.fill", view: .shelf))
+        }
+        return result
+    }
     var body: some View {
         HStack(spacing: 0) {
             ForEach(tabs) { tab in
